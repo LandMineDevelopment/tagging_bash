@@ -26,6 +26,17 @@ setup_environment() {
     if [[ ! -f .tags.md ]]; then
         echo "First run detected. Setting up tagging system..."
 
+        # Prompt for storage directory
+        local storage_dir
+        read -p "Enter storage directory for tags and config (use ~ for home, default: current directory): " storage_dir
+        storage_dir="${storage_dir:-$(pwd)}"
+        # Expand ~ to home directory
+        storage_dir="${storage_dir/#\~/$HOME}"
+        if [[ ! -d $storage_dir ]]; then
+            mkdir -p "$storage_dir" || { echo "Error: Cannot create directory $storage_dir" >&2; exit 1; }
+        fi
+        cd "$storage_dir" || { echo "Error: Cannot access directory $storage_dir" >&2; exit 1; }
+
         # Check dependencies
         local missing_deps=()
         if ! command -v awk &> /dev/null; then
@@ -59,16 +70,39 @@ setup_environment() {
 # Tags for Directory: $dir_path
 
 EOF
+
+        # Offer to make command global
+        read -p "Make 'tagger' command globally accessible? (y/N): " make_global
+        if [[ $make_global =~ ^[Yy]$ ]]; then
+            if [[ -w /usr/local/bin ]]; then
+                cp "$0" /usr/local/bin/tagger && chmod +x /usr/local/bin/tagger
+                echo "Command installed globally as 'tagger'. You can now run 'tagger' from anywhere."
+            else
+                echo "Global installation requires sudo. Run: sudo cp $(realpath "$0") /usr/local/bin/tagger && sudo chmod +x /usr/local/bin/tagger"
+            fi
+        else
+            # Copy script to storage directory and add to PATH
+            cp "$0" "$storage_dir/tagger" && chmod +x "$storage_dir/tagger"
+            local path_line="export PATH=\"$storage_dir:\$PATH\""
+            if ! grep -q "$path_line" ~/.bashrc 2>/dev/null; then
+                echo "$path_line" >> ~/.bashrc 2>/dev/null || echo "Warning: Could not update PATH in ~/.bashrc"
+            fi
+            # Update PATH for current session
+            export PATH="$storage_dir:$PATH"
+            echo "Script copied to $storage_dir/tagger and added to PATH. Command 'tagger' is now available."
+        fi
+
         echo "Setup complete. Created .tags.md in $dir_path"
 
         # Generate tab completion
         generate_completion
-        echo "Tab completion set up. Add 'source ~/.tagger_completion.sh' to your ~/.bashrc for persistence."
+        echo "Tab completion set up and sourced for this session."
     fi
 }
 
 generate_completion() {
-    cat > ~/.tagger_completion.sh << 'EOF'
+    local completion_file=".tagger_completion.sh"
+    cat > "$completion_file" << 'EOF'
 _tagger_complete() {
     local cur prev words cword
     _init_completion || return
@@ -104,7 +138,18 @@ _tagger_complete() {
 
 complete -F _tagger_complete tagger
 EOF
-    source ~/.tagger_completion.sh
+
+    # Add to ~/.bashrc if not already there
+    if [[ ! -f ~/.bashrc ]]; then
+        touch ~/.bashrc
+    fi
+    local bashrc_line="source '$(pwd)/$completion_file'"
+    if ! grep -q "$bashrc_line" ~/.bashrc 2>/dev/null; then
+        echo "$bashrc_line" >> ~/.bashrc 2>/dev/null || echo "Warning: Could not update ~/.bashrc for completion persistence"
+    fi
+
+    # Source for current session
+    source "$completion_file"
 }
 
 # Utility functions

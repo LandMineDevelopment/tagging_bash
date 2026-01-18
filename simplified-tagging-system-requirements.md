@@ -81,6 +81,8 @@ Out of scope:
    - If missing, prompt user to install them (e.g., via package manager).
    - Create the `.tags.md` file if it does not exist.
    - Set up tab completion by sourcing a generated completion script.
+   - Make the command globally accessible by offering to copy the script to `/usr/local/bin/tagger`.
+   - Allow user to specify custom storage location for `.tags.md` and config files during setup (supports ~ for home directory).
 
 ### 2.2 Input/Output
 - All commands output to stdout, errors to stderr.

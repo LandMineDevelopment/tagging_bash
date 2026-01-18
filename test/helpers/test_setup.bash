@@ -16,20 +16,25 @@ setup_test_dir() {
     
     # Initialize (simulate first run without prompts)
     mkdir -p ~/.tagger 2>/dev/null || true
-    echo 'n' | ./tagger.sh --version >/dev/null 2>&1 || true
+    # Answers: storage dir (empty for current), install rg (n), make global (n)
+    printf '\n\nn\nn\n' | ./tagger.sh --version >/dev/null 2>&1 || true
+    # Clean up any generated files
+    rm -f ~/.tagger_completion.sh tagger
 }
 
 # Clean up test directory
 teardown_test_dir() {
     cd /
     rm -rf "$TEST_DIR"
+    # Clean up PATH changes if any
+    sed -i '/export PATH.*tagger/d' ~/.bashrc 2>/dev/null || true
 }
 
 # Add sample tags for testing
 setup_sample_tags() {
-    echo "n" | ./tagger.sh add file1.txt urgent project/alpha >/dev/null 2>&1
-    echo "n" | ./tagger.sh add file2.md important docs >/dev/null 2>&1
-    echo "n" | ./tagger.sh add file3.py bug fix/urgent >/dev/null 2>&1
+    ./tagger.sh add file1.txt urgent project/alpha >/dev/null 2>&1
+    ./tagger.sh add file2.md important docs >/dev/null 2>&1
+    ./tagger.sh add file3.py bug fix/urgent >/dev/null 2>&1
 }
 
 # Get current tagger.sh path
