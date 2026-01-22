@@ -5,6 +5,37 @@ _tagg() {
     local cur prev words cword
     _init_completion || return
 
+    # Find tagg executable path
+    local tagg_cmd
+    if command -v tagg >/dev/null 2>&1; then
+        tagg_cmd="tagg"
+    else
+        # Try common locations
+        for dir in "$HOME/.tagging_bash/bin" "$HOME/bin"; do
+            if [[ -x "$dir/tagg" ]]; then
+                tagg_cmd="$dir/tagg"
+                break
+            fi
+        done
+    fi
+
+    # If tagg not found, provide basic completion
+    if [[ -z "$tagg_cmd" ]]; then
+        case $cword in
+            1)
+                COMPREPLY=($(compgen -W "install uninstall add remove edit list help" -- "$cur"))
+                ;;
+            2)
+                case $prev in
+                    add|remove|edit|list)
+                        _filedir
+                        ;;
+                esac
+                ;;
+        esac
+        return
+    fi
+
     case $cword in
         1)
             COMPREPLY=($(compgen -W "install uninstall add remove edit list help" -- "$cur"))
@@ -22,7 +53,7 @@ _tagg() {
                     # Complete files and existing tags
                     _filedir
                     local tags
-                    tags=$(tagg list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                    tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
                     COMPREPLY+=($(compgen -W "$tags" -- "$cur"))
                     ;;
                 remove)
@@ -30,7 +61,7 @@ _tagg() {
                     local file="${words[2]}"
                     if [[ -f "$file" ]]; then
                         local tags
-                        tags=$(tagg list "$file" 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                        tags=$("$tagg_cmd" list "$file" 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
                         COMPREPLY=($(compgen -W "$tags" -- "$cur"))
                     fi
                     ;;
@@ -39,7 +70,7 @@ _tagg() {
                     local file="${words[2]}"
                     if [[ -f "$file" ]]; then
                         local tags
-                        tags=$(tagg list "$file" 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                        tags=$("$tagg_cmd" list "$file" 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
                         COMPREPLY=($(compgen -W "$tags" -- "$cur"))
                     fi
                     ;;
@@ -50,14 +81,14 @@ _tagg() {
                 edit)
                     # Complete all existing tags for new-tag
                     local tags
-                    tags=$(tagg list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                    tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
                     COMPREPLY=($(compgen -W "$tags" -- "$cur"))
                     ;;
                 add)
                     # Continue completing files and tags
                     _filedir
                     local tags
-                    tags=$(tagg list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                    tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
                     COMPREPLY+=($(compgen -W "$tags" -- "$cur"))
                     ;;
             esac
@@ -68,7 +99,7 @@ _tagg() {
                 add)
                     _filedir
                     local tags
-                    tags=$(tagg list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                    tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
                     COMPREPLY+=($(compgen -W "$tags" -- "$cur"))
                     ;;
             esac

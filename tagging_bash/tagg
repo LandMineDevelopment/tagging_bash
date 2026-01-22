@@ -295,31 +295,105 @@ save_tags() {
 
 # cmd_install() - Install the tool
 cmd_install() {
-    info "Installing $SCRIPT_NAME..."
+    local was_installed=false
+    if [[ -d "$CONFIG_DIR" && -f "$CONFIG_FILE" && -f "$TAGS_FILE" ]]; then
+        was_installed=true
+        info "Upgrading $SCRIPT_NAME..."
+    else
+        info "Installing $SCRIPT_NAME..."
+    fi
 
     # Create config directory
     mkdir -p "$CONFIG_DIR"
 
-    # Create initial config
-    save_config
+    # Create initial config if not exists
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        save_config
+    fi
 
-    # Create empty tags file
-    touch "$TAGS_FILE"
+    # Create empty tags file if not exists
+    if [[ ! -f "$TAGS_FILE" ]]; then
+        touch "$TAGS_FILE"
+    fi
 
-    # Install bash completion
-    local completion_dir="$HOME/.local/share/bash-completion/completions"
-    mkdir -p "$completion_dir"
+    # Install bash completion to user directory
+    local completion_file="$CONFIG_DIR/completion.bash"
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [[ -f "$script_dir/completion.bash" ]]; then
-        cp "$script_dir/completion.bash" "$completion_dir/tagg"
-        info "Bash completion installed to $completion_dir/tagg"
-        info "Restart your shell or run 'source $completion_dir/tagg' to enable tab completion"
+        if cp "$script_dir/completion.bash" "$completion_file" 2>/dev/null; then
+            info "Bash completion installed to $completion_file"
+            info "To enable tab completion permanently, we need to add a source line to your ~/.bashrc."
+            echo -n "Add tab completion source line to ~/.bashrc? (y/n): "
+            read -r response
+            if [[ "$response" =~ ^[Yy]$ ]]; then
+                local bashrc_file="$HOME/.bashrc"
+                local source_line="source $completion_file"
+                if [[ -f "$bashrc_file" ]] && ! grep -q "$source_line" "$bashrc_file" 2>/dev/null; then
+                    echo "$source_line" >> "$bashrc_file"
+                    info "Added tab completion to $bashrc_file"
+                elif [[ ! -f "$bashrc_file" ]]; then
+                    echo "$source_line" > "$bashrc_file"
+                    info "Created $bashrc_file with tab completion"
+                else
+                    info "Tab completion source line already in $bashrc_file"
+                fi
+            fi
+            # Source it for current session regardless
+            if [[ -f "$completion_file" ]]; then
+                source "$completion_file"
+                info "Tab completion enabled for current session"
+            fi
+        else
+            info "Warning: Could not install bash completion (permission denied)"
+        fi
     else
         info "Warning: completion.bash not found, tab completion not installed"
     fi
 
-    info "$SCRIPT_NAME installed successfully!"
+    # Install script to ~/.tagging_bash/bin for easy access
+    local bin_dir="$CONFIG_DIR/bin"
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+    if mkdir -p "$bin_dir" 2>/dev/null && cp "$script_path" "$bin_dir/tagg" 2>/dev/null; then
+        chmod +x "$bin_dir/tagg"
+        info "Installed $SCRIPT_NAME to $bin_dir/tagg"
+        if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
+            info "To use $SCRIPT_NAME, we need to add $bin_dir to your PATH."
+            # Ask for permission to modify .bashrc
+            echo -n "Modify ~/.bashrc to add $bin_dir to PATH permanently? (y/n): "
+            read -r response
+            if [[ "$response" =~ ^[Yy]$ ]]; then
+                local bashrc_file="$HOME/.bashrc"
+                local path_line="export PATH=\"\$PATH:$bin_dir\""
+                if [[ -f "$bashrc_file" ]]; then
+                    if ! grep -q "$path_line" "$bashrc_file" 2>/dev/null; then
+                        echo "$path_line" >> "$bashrc_file"
+                        info "Added $bin_dir to $bashrc_file"
+                    else
+                        info "$bin_dir already in $bashrc_file"
+                    fi
+                else
+                    echo "$path_line" > "$bashrc_file"
+                    info "Created $bashrc_file with PATH configuration"
+                fi
+                info "Run 'source ~/.bashrc' to apply PATH changes immediately"
+            else
+                info "Run this command to enable $SCRIPT_NAME in current session:"
+                info "  export PATH=\"\$PATH:$bin_dir\""
+                info "To make permanent: echo 'export PATH=\"\$PATH:$bin_dir\"' >> ~/.bashrc"
+            fi
+        fi
+    else
+        info ""
+        info "To use $SCRIPT_NAME globally, either:"
+        info "  1. Add $(pwd) to your PATH: export PATH=\"\$PATH:$(pwd)\""
+        info "  2. Run with full path: $(pwd)/tagg"
+        info "  3. Copy to a directory in your PATH (e.g., ~/bin)"
+    fi
+
+    info "$SCRIPT_NAME ready!"
     info "Configuration directory: $CONFIG_DIR"
     info "Tags database: $TAGS_FILE"
 }
@@ -337,9 +411,45 @@ cmd_uninstall() {
     rm -rf "$CONFIG_DIR"
 
     # Remove bash completion
-    rm -f "$HOME/.local/share/bash-completion/completions/tagg"
+    rm -f "$CONFIG_DIR/completion.bash"
+
+    # Remove script from ~/.tagging_bash/bin
+    local bin_dir="$CONFIG_DIR/bin"
+    if [[ -f "$bin_dir/tagg" ]]; then
+        rm -f "$bin_dir/tagg"
+        # Try to remove the bin directory if empty
+        rmdir "$bin_dir" 2>/dev/null && info "Removed $bin_dir directory" || info "Removed tagg script from $bin_dir"
+    fi
+
+    # Remove PATH from .bashrc
+    local bashrc_file="$HOME/.bashrc"
+    local bin_dir="$CONFIG_DIR/bin"
+    local path_line="export PATH=\"\$PATH:$bin_dir\""
+    if [[ -f "$bashrc_file" ]]; then
+        # Create a temp file without the PATH line
+        local temp_file
+        temp_file=$(mktemp)
+        grep -v "$path_line" "$bashrc_file" > "$temp_file" 2>/dev/null || true
+        mv "$temp_file" "$bashrc_file" 2>/dev/null || rm -f "$temp_file"
+        info "Removed PATH configuration from $bashrc_file"
+    fi
+
+    # Remove completion from .bashrc
+    local bashrc_file="$HOME/.bashrc"
+    local completion_file="$CONFIG_DIR/completion.bash"
+    local source_line="source $completion_file"
+    if [[ -f "$bashrc_file" ]]; then
+        # Create a temp file without the source line
+        local temp_file
+        temp_file=$(mktemp)
+        grep -v "$source_line" "$bashrc_file" > "$temp_file" 2>/dev/null || true
+        mv "$temp_file" "$bashrc_file" 2>/dev/null || rm -f "$temp_file"
+        info "Removed completion configuration from $bashrc_file"
+    fi
 
     info "$SCRIPT_NAME uninstalled successfully!"
+    info "Note: Restart your shell or run this command to remove $CONFIG_DIR/bin from PATH:"
+    info "  export PATH=\"\$(echo \"\$PATH\" | sed 's|:$CONFIG_DIR/bin||g; s|^$CONFIG_DIR/bin:||g')\""
 }
 
 # cmd_add() - Add tags to files

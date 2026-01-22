@@ -141,6 +141,85 @@ run_test() {
     echo ""
 }
 
+# Setup/teardown functions for test isolation
+setup_test() {
+    # Override this function in test files to set up test state
+    return 0
+}
+
+teardown_test() {
+    # Override this function in test files to clean up test state
+    # Clean up any temp files created during tests
+    if [[ -n "${TEST_TEMP_FILES:-}" ]]; then
+        for temp_file in $TEST_TEMP_FILES; do
+            rm -f "$temp_file" 2>/dev/null || true
+        done
+        unset TEST_TEMP_FILES
+    fi
+    # Clean up test files created in project directory
+    local project_dir
+    project_dir="$(dirname "${BASH_SOURCE[0]}")/../.."
+    rm -f "$project_dir/test"*.txt 2>/dev/null || true
+    rm -f "$project_dir/testfile"* 2>/dev/null || true
+    rm -f "$project_dir/empty_file.txt" 2>/dev/null || true
+    rm -f "$project_dir/another_file.txt" 2>/dev/null || true
+    # Clean up any other test artifacts
+    find "$project_dir" -name "*test*" -type f -size 0 -delete 2>/dev/null || true
+    return 0
+}
+
+# Mock management functions
+mock_function() {
+    local func_name="$1"
+    local mock_body="$2"
+
+    # Store original function if not already stored
+    if ! declare -f "_original_$func_name" >/dev/null 2>&1; then
+        eval "_original_$func_name() $(declare -f "$func_name" | tail -n +2)"
+    fi
+
+    # Install mock
+    eval "$func_name() { $mock_body }"
+}
+
+restore_function() {
+    local func_name="$1"
+
+    # Restore original function if it was mocked
+    if declare -f "_original_$func_name" >/dev/null 2>&1; then
+        eval "$func_name() $(declare -f "_original_$func_name" | tail -n +2)"
+        unset -f "_original_$func_name"
+    fi
+}
+
+# Run test with setup/teardown
+run_test_with_isolation() {
+    local test_name="$1"
+    local test_function="$2"
+
+    echo -e "${BLUE}Running test:${NC} $test_name"
+
+    TEST_TOTAL=$((TEST_TOTAL + 1))
+
+    # Setup
+    if setup_test; then
+        # Run test
+        if $test_function; then
+            TEST_PASSED=$((TEST_PASSED + 1))
+        else
+            TEST_FAILED=$((TEST_FAILED + 1))
+        fi
+    else
+        echo -e "${RED}SETUP FAILED${NC}: $test_name"
+        TEST_FAILED=$((TEST_FAILED + 1))
+    fi
+
+    # Teardown
+    teardown_test
+
+    echo ""
+}
+
 run_test_suite() {
     local suite_name="$1"
     local suite_function="$2"
@@ -152,14 +231,8 @@ run_test_suite() {
     local suite_passed=0
     local suite_failed=0
 
-    # Capture output
-    local output
-    output=$(suite_function 2>&1)
-    local exit_code=$?
-
-    echo "$output"
-
-    if [[ $exit_code -eq 0 ]]; then
+    # Run suite function by name
+    if eval "$suite_function"; then
         echo -e "${GREEN}Suite PASSED${NC}"
     else
         echo -e "${RED}Suite FAILED${NC}"
@@ -185,6 +258,12 @@ print_test_summary() {
 }
 
 # Utility functions
+run_command_get_exit() {
+    local exit_code=0
+    "$@" || exit_code=$?
+    echo $exit_code
+}
+
 measure_time_ms() {
     local start_time=$(date +%s%3N)
     "$@" >/dev/null 2>&1  # Suppress output for timing
@@ -212,6 +291,12 @@ export -f assert_performance
 export -f run_test
 export -f run_test_suite
 export -f print_test_summary
+export -f run_command_get_exit
 export -f measure_time_ms
 export -f create_temp_dir
 export -f cleanup_temp_dir
+export -f setup_test
+export -f teardown_test
+export -f mock_function
+export -f restore_function
+export -f run_test_with_isolation

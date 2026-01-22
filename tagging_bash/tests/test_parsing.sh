@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/tagg"
 load_tags() {
     declare -gA file_tags=()
     declare -gA tag_files=()
-    return 0;
+    return 0
 }
 save_tags() { return 0; }
 acquire_lock() { return 0; }
