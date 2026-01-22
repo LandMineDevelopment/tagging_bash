@@ -193,10 +193,8 @@ validate_database() {
     fi
 
     # Try to load and parse
-    local temp_file_tags=()
-    local temp_tag_files=()
-    declare -gA temp_file_tags
-    declare -gA temp_tag_files
+    declare -A temp_file_tags=()
+    declare -A temp_tag_files=()
 
     local current_file=""
     local in_file_section=false
@@ -308,6 +306,19 @@ cmd_install() {
     # Create empty tags file
     touch "$TAGS_FILE"
 
+    # Install bash completion
+    local completion_dir="$HOME/.local/share/bash-completion/completions"
+    mkdir -p "$completion_dir"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "$script_dir/completion.bash" ]]; then
+        cp "$script_dir/completion.bash" "$completion_dir/tagg"
+        info "Bash completion installed to $completion_dir/tagg"
+        info "Restart your shell or run 'source $completion_dir/tagg' to enable tab completion"
+    else
+        info "Warning: completion.bash not found, tab completion not installed"
+    fi
+
     info "$SCRIPT_NAME installed successfully!"
     info "Configuration directory: $CONFIG_DIR"
     info "Tags database: $TAGS_FILE"
@@ -324,6 +335,9 @@ cmd_uninstall() {
 
     # Remove config directory
     rm -rf "$CONFIG_DIR"
+
+    # Remove bash completion
+    rm -f "$HOME/.local/share/bash-completion/completions/tagg"
 
     info "$SCRIPT_NAME uninstalled successfully!"
 }
@@ -367,6 +381,22 @@ cmd_add() {
         fi
     done
 
+    # Deduplicate tags
+    local unique_tags=()
+    for tag in "${tags[@]}"; do
+        local duplicate=false
+        for existing in "${unique_tags[@]}"; do
+            if [[ "$tag" == "$existing" ]]; then
+                duplicate=true
+                break
+            fi
+        done
+        if [[ "$duplicate" == false ]]; then
+            unique_tags+=("$tag")
+        fi
+    done
+    tags=("${unique_tags[@]}")
+
     # Load existing tags
     load_tags
 
@@ -375,7 +405,7 @@ cmd_add() {
     for file_path in "${files[@]}"; do
         for tag in "${tags[@]}"; do
             local existing_tags="${file_tags[$file_path]:-}"
-            if [[ "$existing_tags" == *"|${tag}"* ]] || [[ "$existing_tags" == "${tag}"* ]]; then
+            if [[ "$existing_tags" =~ (^|\|)$tag($|\|) ]]; then
                 error "Tag '$tag' already exists for $file_path"
                 has_duplicates=true
             fi
@@ -491,6 +521,108 @@ cmd_remove() {
     info "Removed tag '$tag' from $file_path"
 }
 
+# cmd_edit() - Edit (replace) a tag on a file
+cmd_edit() {
+    local file_path="$1"
+    local old_tag="$2"
+    local new_tag="$3"
+
+    if [[ $# -ne 3 ]]; then
+        error "Usage: $SCRIPT_NAME edit <file> <old-tag> <new-tag>"
+        return "$EXIT_USAGE"
+    fi
+
+    # Validate file
+    if ! validate_file_path "$file_path"; then
+        return 1
+    fi
+
+    # Validate tags
+    if ! validate_tag_name "$old_tag"; then
+        return 1
+    fi
+
+    if ! validate_tag_name "$new_tag"; then
+        return 1
+    fi
+
+    # Load existing tags
+    load_tags
+
+    # Check if old_tag exists on file
+    local existing_tags="${file_tags[$file_path]:-}"
+    if [[ -z "$existing_tags" ]] || [[ ! "$existing_tags" =~ (^|\|)$old_tag($|\|) ]]; then
+        error "Tag '$old_tag' not found on file $file_path"
+        return 1
+    fi
+
+    # Check if new_tag is the same as old_tag
+    if [[ "$old_tag" == "$new_tag" ]]; then
+        error "Old tag and new tag are the same"
+        return 1
+    fi
+
+    # Check if new_tag already exists on file (prevent duplicates)
+    if [[ "$existing_tags" =~ (^|\|)$new_tag($|\|) ]]; then
+        error "Tag '$new_tag' already exists on file $file_path"
+        return 1
+    fi
+
+    # Escape special regex characters in old_tag (. is the only special char allowed in tags)
+    local escaped_old_tag=$(echo "$old_tag" | sed 's/\./\\./g')
+
+    # Remove old_tag from file_tags
+    if [[ "$existing_tags" == "$old_tag" ]]; then
+        # Only tag
+        unset "file_tags[$file_path]"
+    else
+        # Remove from pipe-separated list
+        local new_tags
+        new_tags=$(echo "$existing_tags" | sed "s/|$escaped_old_tag|/|/g; s/^$escaped_old_tag|//; s/|$escaped_old_tag$//; s/^$escaped_old_tag$//")
+        file_tags["$file_path"]="$new_tags"
+    fi
+
+    # Remove file from tag_files for old_tag
+    local existing_files_old="${tag_files[$old_tag]:-}"
+    if [[ "$existing_files_old" == "$file_path" ]]; then
+        # Only file
+        unset "tag_files[$old_tag]"
+    else
+        # Remove from pipe-separated list
+        local new_files_old
+        new_files_old=$(echo "$existing_files_old" | sed "s/|$file_path|/|/g; s/^$file_path|//; s/|$file_path$//; s/^$file_path$//")
+        tag_files["$old_tag"]="$new_files_old"
+    fi
+
+    # Add new_tag to file_tags
+    local updated_tags="${file_tags[$file_path]:-}"
+    if [[ -z "$updated_tags" ]]; then
+        file_tags["$file_path"]="$new_tag"
+    else
+        file_tags["$file_path"]="${updated_tags}|${new_tag}"
+    fi
+
+    # Add file to tag_files for new_tag
+    local existing_files_new="${tag_files[$new_tag]:-}"
+    if [[ -z "$existing_files_new" ]]; then
+        tag_files["$new_tag"]="$file_path"
+    else
+        tag_files["$new_tag"]="${existing_files_new}|${file_path}"
+    fi
+
+    # Save tags
+    save_tags
+
+    # Validate database integrity
+    if ! validate_database; then
+        error "Database integrity validation failed after edit operation"
+        return 1
+    fi
+
+    # Confirmation
+    info "Replaced tag '$old_tag' with '$new_tag' on $file_path"
+}
+
 # cmd_list() - List tags for a file or all distinct tags globally
 cmd_list() {
     if [[ $# -gt 1 ]]; then
@@ -557,21 +689,23 @@ $SCRIPT_NAME $SCRIPT_VERSION - A bash-native file tagging system
  USAGE:
      $SCRIPT_NAME <command> [options]
 
-  COMMANDS:
-      install         Install $SCRIPT_NAME
-      uninstall       Uninstall $SCRIPT_NAME
-      add <files> <tags>    Add tags to one or more files
-      remove <file> <tag>   Remove a tag from a file
-      list [file]      List all tags or tags for a specific file
-      help            Show this help message
+   COMMANDS:
+       install         Install $SCRIPT_NAME
+       uninstall       Uninstall $SCRIPT_NAME
+       add <files> <tags>    Add tags to one or more files
+       remove <file> <tag>   Remove a tag from a file
+       edit <file> <old-tag> <new-tag>   Replace a tag on a file
+       list [file]      List all tags or tags for a specific file
+       help            Show this help message
 
-  EXAMPLES:
-      $SCRIPT_NAME install
-      $SCRIPT_NAME add script.sh bash utility
-      $SCRIPT_NAME remove script.sh bash
-      $SCRIPT_NAME list
-      $SCRIPT_NAME list script.sh
-      $SCRIPT_NAME help
+   EXAMPLES:
+       $SCRIPT_NAME install
+       $SCRIPT_NAME add script.sh bash utility
+       $SCRIPT_NAME remove script.sh bash
+       $SCRIPT_NAME edit script.sh bash shell
+       $SCRIPT_NAME list
+       $SCRIPT_NAME list script.sh
+       $SCRIPT_NAME help
 
  For more information, see the README.md file.
 EOF
@@ -614,6 +748,11 @@ main() {
         remove)
             acquire_lock
             cmd_remove "$@"
+            release_lock
+            ;;
+        edit)
+            acquire_lock
+            cmd_edit "$@"
             release_lock
             ;;
         list)
