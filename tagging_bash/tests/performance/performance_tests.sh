@@ -3,8 +3,8 @@
 # performance/performance_tests.sh - Performance tests for timing requirements
 #
 
-source "$(dirname "$0")/../test_framework.sh"
-source "$(dirname "$0")/../../tagg"
+source "$(dirname "${BASH_SOURCE[0]}")/../test_framework.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../../tagg"
 
 # Mock functions for performance testing
 validate_file_path() { return 0; }

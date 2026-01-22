@@ -3,8 +3,8 @@
 # integration/add_command_tests.sh - Integration tests for add command
 #
 
-source "$(dirname "$0")/../test_framework.sh"
-source "$(dirname "$0")/../../tagg"
+source "$(dirname "${BASH_SOURCE[0]}")/../test_framework.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../../tagg"
 
 # Mock functions for testing
 validate_file_path() { return 0; }  # Allow temp files

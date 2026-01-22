@@ -8,6 +8,12 @@
 
 set -euo pipefail
 
+# Prevent multiple sourcing
+if [[ -n "${_TAGG_SCRIPT_LOADED:-}" ]]; then
+    return 0
+fi
+readonly _TAGG_SCRIPT_LOADED=true
+
 # ============================================================================
 # Constants
 # ============================================================================
@@ -179,6 +185,79 @@ load_tags() {
     debug "Loaded ${#file_tags[@]} files and ${#tag_files[@]} unique tags"
 }
 
+# validate_database() - Validate database integrity
+validate_database() {
+    if [[ ! -f "$TAGS_FILE" ]]; then
+        debug "Tags file does not exist, integrity OK"
+        return 0
+    fi
+
+    # Try to load and parse
+    local temp_file_tags=()
+    local temp_tag_files=()
+    declare -gA temp_file_tags
+    declare -gA temp_tag_files
+
+    local current_file=""
+    local in_file_section=false
+
+    while IFS= read -r line; do
+        # Check for file header
+        if [[ "$line" =~ ^#\ (.+)$ ]]; then
+            current_file="${BASH_REMATCH[1]}"
+            in_file_section=true
+            continue
+        fi
+
+        # Check for tag list item
+        if [[ "$in_file_section" == true && "$line" =~ ^-\ (.+)$ ]]; then
+            local tag="${BASH_REMATCH[1]}"
+            if [[ -n "$current_file" && -n "$tag" ]]; then
+                # Add to temp_file_tags
+                if [[ -z "${temp_file_tags[$current_file]:-}" ]]; then
+                    temp_file_tags["$current_file"]="$tag"
+                else
+                    temp_file_tags["$current_file"]="${temp_file_tags[$current_file]}|$tag"
+                fi
+
+                # Add to temp_tag_files
+                if [[ -z "${temp_tag_files[$tag]:-}" ]]; then
+                    temp_tag_files["$tag"]="$current_file"
+                else
+                    temp_tag_files["$tag"]="${temp_tag_files[$tag]}|$current_file"
+                fi
+            fi
+        fi
+    done < "$TAGS_FILE"
+
+    # Check consistency: every file in file_tags should be in tag_files
+    for file in "${!temp_file_tags[@]}"; do
+        local tags="${temp_file_tags[$file]}"
+        IFS='|' read -ra tag_array <<< "$tags"
+        for tag in "${tag_array[@]}"; do
+            if [[ ! "${temp_tag_files[$tag]:-}" =~ (^|\|)$file($|\|) ]]; then
+                error "Database integrity error: file $file has tag $tag but tag $tag does not reference file"
+                return 1
+            fi
+        done
+    done
+
+    # Check reverse
+    for tag in "${!temp_tag_files[@]}"; do
+        local files="${temp_tag_files[$tag]}"
+        IFS='|' read -ra file_array <<< "$files"
+        for file in "${file_array[@]}"; do
+            if [[ ! "${temp_file_tags[$file]:-}" =~ (^|\|)$tag($|\|) ]]; then
+                error "Database integrity error: tag $tag references file $file but file $file does not have tag"
+                return 1
+            fi
+        done
+    done
+
+    debug "Database integrity validated"
+    return 0
+}
+
 # save_tags() - Save tags from associative arrays to markdown file
 save_tags() {
     mkdir -p "$CONFIG_DIR"
@@ -346,6 +425,72 @@ cmd_add() {
     save_tags
 }
 
+# cmd_remove() - Remove tags from files
+cmd_remove() {
+    local file_path="$1"
+    local tag="$2"
+
+    if [[ $# -ne 2 ]]; then
+        error "Usage: $SCRIPT_NAME remove <file> <tag>"
+        return "$EXIT_USAGE"
+    fi
+
+    # Validate file
+    if ! validate_file_path "$file_path"; then
+        return 1
+    fi
+
+    # Validate tag
+    if ! validate_tag_name "$tag"; then
+        return 1
+    fi
+
+    # Load existing tags
+    load_tags
+
+    # Check if tag exists on file
+    local existing_tags="${file_tags[$file_path]:-}"
+    if [[ -z "$existing_tags" ]] || [[ ! "$existing_tags" =~ (^|\|)$tag($|\|) ]]; then
+        error "Tag '$tag' not found on file $file_path"
+        return 1
+    fi
+
+    # Remove tag from file_tags
+    if [[ "$existing_tags" == "$tag" ]]; then
+        # Only tag
+        unset "file_tags[$file_path]"
+    else
+        # Remove from pipe-separated list
+        local new_tags
+        new_tags=$(echo "$existing_tags" | sed "s/|$tag|/|/g; s/^$tag|//; s/|$tag$//; s/^$tag$//")
+        file_tags["$file_path"]="$new_tags"
+    fi
+
+    # Remove file from tag_files
+    local existing_files="${tag_files[$tag]:-}"
+    if [[ "$existing_files" == "$file_path" ]]; then
+        # Only file
+        unset "tag_files[$tag]"
+    else
+        # Remove from pipe-separated list
+        local new_files
+        new_files=$(echo "$existing_files" | sed "s/|$file_path|/|/g; s/^$file_path|//; s/|$file_path$//; s/^$file_path$//")
+        tag_files["$tag"]="$new_files"
+    fi
+
+    # Save tags
+    save_tags
+
+    # Validate database integrity
+    if ! validate_database; then
+        error "Database integrity validation failed after remove operation"
+        return 1
+    fi
+
+    # Confirmation
+    info "Removed tag '$tag' from $file_path"
+}
+
 # cmd_help() - Show help
 cmd_help() {
     cat << EOF
@@ -358,12 +503,13 @@ USAGE:
      install         Install $SCRIPT_NAME
      uninstall       Uninstall $SCRIPT_NAME
      add <files> <tags>    Add tags to one or more files
+     remove <file> <tag>   Remove a tag from a file
      help            Show this help message
 
  EXAMPLES:
      $SCRIPT_NAME install
      $SCRIPT_NAME add script.sh bash utility
-     $SCRIPT_NAME add *.txt important project-a
+     $SCRIPT_NAME remove script.sh bash
      $SCRIPT_NAME help
 
 For more information, see the README.md file.
@@ -402,6 +548,11 @@ main() {
         add)
             acquire_lock
             cmd_add "$@"
+            release_lock
+            ;;
+        remove)
+            acquire_lock
+            cmd_remove "$@"
             release_lock
             ;;
         help|--help|-h)

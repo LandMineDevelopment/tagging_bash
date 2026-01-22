@@ -12,6 +12,7 @@ source "$SCRIPT_DIR/helpers/test_helpers.sh"
 # Import test suites
 source "$SCRIPT_DIR/unit/tag_validation_tests.sh"
 source "$SCRIPT_DIR/integration/add_command_tests.sh"
+source "$SCRIPT_DIR/integration/remove_command_tests.sh"
 source "$SCRIPT_DIR/performance/performance_tests.sh"
 
 # Main test runner
@@ -22,6 +23,7 @@ main() {
     # Run test suites
     run_test_suite "Unit Tests - Tag Validation" run_unit_tag_tests
     run_test_suite "Integration Tests - Add Command" run_integration_add_tests
+    run_test_suite "Integration Tests - Remove Command" run_integration_remove_tests
     run_test_suite "Performance Tests" run_performance_tests
 
     # Print final summary

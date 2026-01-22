@@ -4,6 +4,12 @@
 # Provides assertions, test runner, and reporting for bash-based testing
 #
 
+# Prevent multiple sourcing
+if [[ -n "${_TEST_FRAMEWORK_LOADED:-}" ]]; then
+    return 0
+fi
+readonly _TEST_FRAMEWORK_LOADED=true
+
 # Test framework constants
 readonly TEST_PASS=0
 readonly TEST_FAIL=1

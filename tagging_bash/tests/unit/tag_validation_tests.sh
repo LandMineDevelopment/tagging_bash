@@ -3,8 +3,8 @@
 # unit/tag_validation_tests.sh - Unit tests for tag validation functions
 #
 
-source "$(dirname "$0")/../test_framework.sh"
-source "$(dirname "$0")/../../tagg"
+source "$(dirname "${BASH_SOURCE[0]}")/../test_framework.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../../tagg"
 
 # Test tag validation
 test_validate_tag_name_valid() {
