@@ -491,28 +491,89 @@ cmd_remove() {
     info "Removed tag '$tag' from $file_path"
 }
 
+# cmd_list() - List tags for a file or all distinct tags globally
+cmd_list() {
+    if [[ $# -gt 1 ]]; then
+        error "Usage: $SCRIPT_NAME list [file]"
+        return "$EXIT_USAGE"
+    fi
+
+    # Load existing tags
+    load_tags
+
+    if [[ $# -eq 0 ]]; then
+        # List all distinct tags globally
+        if [[ ${#tag_files[@]} -eq 0 ]]; then
+            info "No tags found"
+            return 0
+        fi
+
+        # Collect all unique tags
+        local all_tags=()
+        for tag in "${!tag_files[@]}"; do
+            all_tags+=("$tag")
+        done
+
+        # Sort tags
+        local sorted_tags
+        mapfile -t sorted_tags < <(printf '%s\n' "${all_tags[@]}" | sort)
+
+        info "All distinct tags:"
+        for tag in "${sorted_tags[@]}"; do
+            echo "  $tag"
+        done
+    else
+        # List tags for specific file
+        local file_path="$1"
+
+        # Validate file
+        if ! validate_file_path "$file_path"; then
+            return 1
+        fi
+
+        local tags="${file_tags[$file_path]:-}"
+        if [[ -z "$tags" ]]; then
+            info "No tags found for $file_path"
+            return 0
+        fi
+
+        # Split and sort tags
+        IFS='|' read -ra tag_array <<< "$tags"
+        local sorted_tags
+        mapfile -t sorted_tags < <(printf '%s\n' "${tag_array[@]}" | sort)
+
+        info "Tags for $file_path:"
+        for tag in "${sorted_tags[@]}"; do
+            echo "  $tag"
+        done
+    fi
+}
+
 # cmd_help() - Show help
 cmd_help() {
     cat << EOF
 $SCRIPT_NAME $SCRIPT_VERSION - A bash-native file tagging system
 
-USAGE:
-    $SCRIPT_NAME <command> [options]
+ USAGE:
+     $SCRIPT_NAME <command> [options]
 
- COMMANDS:
-     install         Install $SCRIPT_NAME
-     uninstall       Uninstall $SCRIPT_NAME
-     add <files> <tags>    Add tags to one or more files
-     remove <file> <tag>   Remove a tag from a file
-     help            Show this help message
+  COMMANDS:
+      install         Install $SCRIPT_NAME
+      uninstall       Uninstall $SCRIPT_NAME
+      add <files> <tags>    Add tags to one or more files
+      remove <file> <tag>   Remove a tag from a file
+      list [file]      List all tags or tags for a specific file
+      help            Show this help message
 
- EXAMPLES:
-     $SCRIPT_NAME install
-     $SCRIPT_NAME add script.sh bash utility
-     $SCRIPT_NAME remove script.sh bash
-     $SCRIPT_NAME help
+  EXAMPLES:
+      $SCRIPT_NAME install
+      $SCRIPT_NAME add script.sh bash utility
+      $SCRIPT_NAME remove script.sh bash
+      $SCRIPT_NAME list
+      $SCRIPT_NAME list script.sh
+      $SCRIPT_NAME help
 
-For more information, see the README.md file.
+ For more information, see the README.md file.
 EOF
 }
 
@@ -554,6 +615,9 @@ main() {
             acquire_lock
             cmd_remove "$@"
             release_lock
+            ;;
+        list)
+            cmd_list "$@"
             ;;
         help|--help|-h)
             cmd_help "$@"

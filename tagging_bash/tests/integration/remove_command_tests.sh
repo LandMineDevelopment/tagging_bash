@@ -55,10 +55,19 @@ test_remove_non_existent_tag() {
     assert_contains "$output" "Tag 'nonexistent' not found" "Should show error for non-existent tag"
 }
 
+# Test remove with invalid tag name
+test_remove_invalid_tag() {
+    local output
+    output=$(cmd_remove "/tmp/test_remove" "invalid tag" 2>&1)
+
+    assert_contains "$output" "Invalid tag name" "Should reject invalid tag"
+}
+
 # Run integration tests
 run_integration_remove_tests() {
     run_test "remove_single_tag" test_remove_single_tag
     run_test "remove_non_existent_tag" test_remove_non_existent_tag
+    run_test "remove_invalid_tag" test_remove_invalid_tag
 }
 
 # Run tests if executed directly
