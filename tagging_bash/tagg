@@ -1,0 +1,422 @@
+#!/usr/bin/env bash
+#
+# tagging_bash.sh - A bash-native file tagging system
+#
+# This script provides universal file tagging across all directories with
+# fuzzy search, hierarchical tags, and programmatic API integration.
+#
+
+set -euo pipefail
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+readonly SCRIPT_NAME="tagg"
+readonly SCRIPT_VERSION="0.1.0"
+readonly CONFIG_DIR="${HOME}/.tagging_bash"
+readonly TAGS_FILE="${CONFIG_DIR}/tags.md"
+readonly CONFIG_FILE="${CONFIG_DIR}/config.sh"
+readonly LOCK_FILE="${CONFIG_DIR}/.lock"
+
+# Default configuration
+readonly DEFAULT_TAG_SEPARATOR="."
+readonly DEFAULT_FUZZY_THRESHOLD=0.8
+
+# Exit codes (POSIX compliant)
+readonly EXIT_SUCCESS=0
+readonly EXIT_ERROR=1
+readonly EXIT_USAGE=2
+readonly EXIT_NOT_FOUND=3
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+# error() - Consistent error reporting to stderr
+error() {
+    echo "Error: $*" >&2
+    return "${EXIT_ERROR}"
+}
+
+# info() - Informational messages to stdout
+info() {
+    echo "$*"
+}
+
+# debug() - Debug messages if DEBUG is set
+debug() {
+    if [[ -n "${DEBUG:-}" ]]; then
+        echo "DEBUG: $*" >&2
+    fi
+}
+
+# validate_tag_name() - Validate tag name according to rules
+validate_tag_name() {
+    local tag="$1"
+
+    # Tag naming rules: letters, numbers, underscores, hyphens, separator
+    if [[ ! "$tag" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+        error "Invalid tag name '$tag': only letters, numbers, underscores, hyphens, and dots allowed"
+        return 1
+    fi
+
+    # Max length 50 characters
+    if [[ ${#tag} -gt 50 ]]; then
+        error "Tag name '$tag' too long: maximum 50 characters"
+        return 1
+    fi
+
+    return 0
+}
+
+# validate_file_path() - Validate file path exists and is readable
+validate_file_path() {
+    local file_path="$1"
+
+    if [[ ! -f "$file_path" ]]; then
+        error "File does not exist: $file_path"
+        return 1
+    fi
+
+    if [[ ! -r "$file_path" ]]; then
+        error "File not readable: $file_path"
+        return 1
+    fi
+
+    return 0
+}
+
+# acquire_lock() - Acquire file lock for concurrent access
+acquire_lock() {
+    if ! command -v flock >/dev/null 2>&1; then
+        error "flock command not available for file locking"
+        return 1
+    fi
+
+    exec 200>"$LOCK_FILE"
+    if ! flock -n 200; then
+        error "Another instance of $SCRIPT_NAME is running"
+        return 1
+    fi
+}
+
+# release_lock() - Release file lock
+release_lock() {
+    flock -u 200 2>/dev/null || true
+}
+
+# load_config() - Load user configuration
+load_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # shellcheck source=/dev/null
+        source "$CONFIG_FILE"
+    fi
+
+    # Set defaults if not configured
+    TAG_SEPARATOR="${TAG_SEPARATOR:-$DEFAULT_TAG_SEPARATOR}"
+    FUZZY_THRESHOLD="${FUZZY_THRESHOLD:-$DEFAULT_FUZZY_THRESHOLD}"
+}
+
+# save_config() - Save configuration
+save_config() {
+    mkdir -p "$CONFIG_DIR"
+
+    cat > "$CONFIG_FILE" << EOF
+# tagging_bash configuration
+TAG_SEPARATOR="${TAG_SEPARATOR:-$DEFAULT_TAG_SEPARATOR}"
+FUZZY_THRESHOLD="${FUZZY_THRESHOLD:-$DEFAULT_FUZZY_THRESHOLD}"
+EOF
+}
+
+# ============================================================================
+# Core Tag Functions
+# ============================================================================
+
+# load_tags() - Load tags from markdown file into associative arrays
+load_tags() {
+    # Initialize associative arrays
+    declare -gA file_tags=()
+    declare -gA tag_files=()
+
+    if [[ ! -f "$TAGS_FILE" ]]; then
+        debug "Tags file does not exist: $TAGS_FILE"
+        return 0
+    fi
+
+    local current_file=""
+    local in_file_section=false
+
+    while IFS= read -r line; do
+        # Check for file header
+        if [[ "$line" =~ ^#\ (.+)$ ]]; then
+            current_file="${BASH_REMATCH[1]}"
+            in_file_section=true
+            continue
+        fi
+
+        # Check for tag list item
+        if [[ "$in_file_section" == true && "$line" =~ ^-\ (.+)$ ]]; then
+            local tag="${BASH_REMATCH[1]}"
+            if [[ -n "$current_file" && -n "$tag" ]]; then
+                # Add to file_tags
+                if [[ -z "${file_tags[$current_file]:-}" ]]; then
+                    file_tags["$current_file"]="$tag"
+                else
+                    file_tags["$current_file"]="${file_tags[$current_file]}|$tag"
+                fi
+
+                # Add to tag_files
+                if [[ -z "${tag_files[$tag]:-}" ]]; then
+                    tag_files["$tag"]="$current_file"
+                else
+                    tag_files["$tag"]="${tag_files[$tag]}|$current_file"
+                fi
+            fi
+        fi
+    done < "$TAGS_FILE"
+
+    debug "Loaded ${#file_tags[@]} files and ${#tag_files[@]} unique tags"
+}
+
+# save_tags() - Save tags from associative arrays to markdown file
+save_tags() {
+    mkdir -p "$CONFIG_DIR"
+
+    # Create temporary file
+    local temp_file
+    temp_file=$(mktemp)
+
+    # Sort files for consistent output
+    local sorted_files
+    mapfile -t sorted_files < <(printf '%s\n' "${!file_tags[@]}" | sort)
+
+    for file_path in "${sorted_files[@]}"; do
+        echo "# $file_path" >> "$temp_file"
+
+        # Split tags and sort them
+        local tags="${file_tags[$file_path]}"
+        IFS='|' read -ra tag_array <<< "$tags"
+        local sorted_tags
+        mapfile -t sorted_tags < <(printf '%s\n' "${tag_array[@]}" | sort)
+
+        for tag in "${sorted_tags[@]}"; do
+            echo "- $tag" >> "$temp_file"
+        done
+
+        echo "" >> "$temp_file"
+    done
+
+    # Atomic write
+    mv "$temp_file" "$TAGS_FILE"
+    debug "Saved tags to $TAGS_FILE"
+}
+
+# ============================================================================
+# Command Functions
+# ============================================================================
+
+# cmd_install() - Install the tool
+cmd_install() {
+    info "Installing $SCRIPT_NAME..."
+
+    # Create config directory
+    mkdir -p "$CONFIG_DIR"
+
+    # Create initial config
+    save_config
+
+    # Create empty tags file
+    touch "$TAGS_FILE"
+
+    info "$SCRIPT_NAME installed successfully!"
+    info "Configuration directory: $CONFIG_DIR"
+    info "Tags database: $TAGS_FILE"
+}
+
+# cmd_uninstall() - Uninstall the tool
+cmd_uninstall() {
+    if [[ ! -d "$CONFIG_DIR" ]]; then
+        error "Not installed"
+        return 1
+    fi
+
+    info "Uninstalling $SCRIPT_NAME..."
+
+    # Remove config directory
+    rm -rf "$CONFIG_DIR"
+
+    info "$SCRIPT_NAME uninstalled successfully!"
+}
+
+# cmd_add() - Add tags to files
+cmd_add() {
+    local files=()
+    local tags=()
+
+    # Parse arguments: all args are files or tags
+    # Files are those that exist as files, tags are the rest
+    for arg in "$@"; do
+        if [[ -f "$arg" ]]; then
+            files+=("$arg")
+        else
+            tags+=("$arg")
+        fi
+    done
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        error "At least one file required"
+        return "$EXIT_USAGE"
+    fi
+
+    if [[ ${#tags[@]} -eq 0 ]]; then
+        error "At least one tag required"
+        return "$EXIT_USAGE"
+    fi
+
+    # Validate files
+    for file in "${files[@]}"; do
+        if ! validate_file_path "$file"; then
+            return 1
+        fi
+    done
+
+    # Validate tags
+    for tag in "${tags[@]}"; do
+        if ! validate_tag_name "$tag"; then
+            return 1
+        fi
+    done
+
+    # Load existing tags
+    load_tags
+
+    # Check for duplicates first
+    local has_duplicates=false
+    for file_path in "${files[@]}"; do
+        for tag in "${tags[@]}"; do
+            local existing_tags="${file_tags[$file_path]:-}"
+            if [[ "$existing_tags" == *"|${tag}"* ]] || [[ "$existing_tags" == "${tag}"* ]]; then
+                error "Tag '$tag' already exists for $file_path"
+                has_duplicates=true
+            fi
+        done
+    done
+
+    if [[ "$has_duplicates" == true ]]; then
+        return 1
+    fi
+
+    # Add tags to each file
+    local total_added=0
+    for file_path in "${files[@]}"; do
+        local added=()
+        for tag in "${tags[@]}"; do
+            # Add to file_tags
+            local existing_tags="${file_tags[$file_path]:-}"
+            if [[ -z "$existing_tags" ]]; then
+                file_tags["$file_path"]="$tag"
+            else
+                file_tags["$file_path"]="${existing_tags}|${tag}"
+            fi
+
+            # Add to tag_files
+            local existing_files="${tag_files[$tag]:-}"
+            if [[ -z "$existing_files" ]]; then
+                tag_files["$tag"]="$file_path"
+            else
+                tag_files["$tag"]="${existing_files}|${file_path}"
+            fi
+
+            added+=("$tag")
+        done
+
+        if [[ ${#files[@]} -eq 1 ]]; then
+            info "Added tags to $file_path: ${added[*]}"
+        fi
+
+        total_added=$((total_added + ${#added[@]}))
+    done
+
+    if [[ ${#files[@]} -gt 1 ]]; then
+        info "Tagged ${#files[@]} files with: ${tags[*]}"
+    fi
+
+    # Save tags
+    save_tags
+}
+
+# cmd_help() - Show help
+cmd_help() {
+    cat << EOF
+$SCRIPT_NAME $SCRIPT_VERSION - A bash-native file tagging system
+
+USAGE:
+    $SCRIPT_NAME <command> [options]
+
+ COMMANDS:
+     install         Install $SCRIPT_NAME
+     uninstall       Uninstall $SCRIPT_NAME
+     add <files> <tags>    Add tags to one or more files
+     help            Show this help message
+
+ EXAMPLES:
+     $SCRIPT_NAME install
+     $SCRIPT_NAME add script.sh bash utility
+     $SCRIPT_NAME add *.txt important project-a
+     $SCRIPT_NAME help
+
+For more information, see the README.md file.
+EOF
+}
+
+# ============================================================================
+# Main Function
+# ============================================================================
+
+main() {
+    local command=""
+
+    # Load configuration
+    load_config
+
+    # Acquire lock for operations that modify data
+    # Note: This is a basic implementation; more sophisticated locking may be needed
+
+    # Parse command
+    if [[ $# -eq 0 ]]; then
+        cmd_help
+        exit "$EXIT_USAGE"
+    fi
+
+    command="$1"
+    shift
+
+    case "$command" in
+        install)
+            cmd_install "$@"
+            ;;
+        uninstall)
+            cmd_uninstall "$@"
+            ;;
+        add)
+            acquire_lock
+            cmd_add "$@"
+            release_lock
+            ;;
+        help|--help|-h)
+            cmd_help "$@"
+            ;;
+        *)
+            error "Unknown command: $command"
+            echo "" >&2
+            cmd_help >&2
+            exit "$EXIT_USAGE"
+            ;;
+    esac
+}
+
+# Run main function with all arguments if not sourced
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
