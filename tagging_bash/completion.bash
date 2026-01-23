@@ -45,11 +45,26 @@ _tagg() {
                 add|remove|edit|list)
                     _filedir
                     ;;
-                search)
-                    # Complete existing tags for search
-                    local tags
-                    tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
-                    COMPREPLY=($(compgen -W "$tags" -- "$cur"))
+                 search)
+                      # Complete options or existing tags for search
+                      if [[ "$cur" == --* ]]; then
+                          COMPREPLY=($(compgen -W "--dir --fuzzy --help" -- "$cur"))
+                      else
+                          # Complete existing tags for search with intelligent substring matching
+                          local tags
+                          tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                          local matching=()
+                          for tag in $tags; do
+                              if [[ "$tag" == *"$cur"* ]]; then
+                                  matching+=("$tag")
+                              fi
+                          done
+                          COMPREPLY=("${matching[@]}")
+                      fi
+                      ;;
+                --dir)
+                    # Complete directory paths
+                    _filedir -d
                     ;;
             esac
             ;;
@@ -80,6 +95,25 @@ _tagg() {
                         COMPREPLY=($(compgen -W "$tags" -- "$cur"))
                     fi
                     ;;
+                   search)
+                       # For search, complete options, directories, or tags
+                       if [[ "$cur" == --* ]]; then
+                           COMPREPLY=($(compgen -W "--dir --fuzzy --help" -- "$cur"))
+                       elif [[ "$prev" == "--dir" ]]; then
+                           _filedir -d
+                       else
+                           # Complete tags
+                           local tags
+                           tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                           local matching=()
+                           for tag in $tags; do
+                               if [[ "$tag" == *"$cur"* ]]; then
+                                   matching+=("$tag")
+                               fi
+                           done
+                           COMPREPLY=("${matching[@]}")
+                       fi
+                       ;;
             esac
             ;;
         4)
@@ -97,18 +131,56 @@ _tagg() {
                     tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
                     COMPREPLY+=($(compgen -W "$tags" -- "$cur"))
                     ;;
+                  search)
+                      # For search completion
+                      if [[ "$cur" == --* ]]; then
+                          COMPREPLY=($(compgen -W "--dir --fuzzy --help" -- "$cur"))
+                      elif [[ "$prev" == "--dir" ]]; then
+                          _filedir -d
+                      else
+                          # Continue completing tags for search
+                          local tags
+                          tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                          local matching=()
+                          for tag in $tags; do
+                              if [[ "$tag" == *"$cur"* ]]; then
+                                  matching+=("$tag")
+                              fi
+                          done
+                          COMPREPLY=("${matching[@]}")
+                      fi
+                     ;;
             esac
             ;;
-        *)
-            # For add, continue with files and tags
-            case ${words[1]} in
-                add)
-                    _filedir
-                    local tags
-                    tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
-                    COMPREPLY+=($(compgen -W "$tags" -- "$cur"))
-                    ;;
-            esac
+         *)
+             # For add and search, continue completion
+             case ${words[1]} in
+                 add)
+                     _filedir
+                     local tags
+                     tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                     COMPREPLY+=($(compgen -W "$tags" -- "$cur"))
+                     ;;
+                 search)
+                     # For search, complete options, directories, or tags
+                     if [[ "$cur" == --* ]]; then
+                         COMPREPLY=($(compgen -W "--dir --fuzzy --help" -- "$cur"))
+                     elif [[ "$prev" == "--dir" ]]; then
+                         _filedir -d
+                     else
+                         # Complete tags
+                         local tags
+                         tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                         local matching=()
+                         for tag in $tags; do
+                             if [[ "$tag" == *"$cur"* ]]; then
+                                 matching+=("$tag")
+                             fi
+                         done
+                         COMPREPLY=("${matching[@]}")
+                     fi
+                     ;;
+             esac
             ;;
     esac
 }
