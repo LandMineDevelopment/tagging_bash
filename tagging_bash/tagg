@@ -791,6 +791,114 @@ cmd_list() {
     fi
 }
 
+# cmd_search() - Search for files by tag(s)
+cmd_search() {
+    if [[ $# -eq 0 ]]; then
+        error "Usage: $SCRIPT_NAME search <tag> [tag2 ...] [--dir <directory>]"
+        return "$EXIT_USAGE"
+    fi
+
+    local search_tags=()
+    local search_dir=""
+    local parsing_options=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dir)
+                if [[ $# -lt 2 ]]; then
+                    error "--dir requires a directory argument"
+                    return "$EXIT_USAGE"
+                fi
+                search_dir="$2"
+                shift 2
+                ;;
+            --*)
+                error "Unknown option: $1"
+                return "$EXIT_USAGE"
+                ;;
+            *)
+                search_tags+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [[ ${#search_tags[@]} -eq 0 ]]; then
+        error "At least one tag required for search"
+        return "$EXIT_USAGE"
+    fi
+
+    # Validate tags
+    for tag in "${search_tags[@]}"; do
+        if ! validate_tag_name "$tag"; then
+            return 1
+        fi
+    done
+
+    # Load existing tags
+    load_tags
+
+    # Perform search
+    local matches=()
+    local start_time
+    start_time=$(date +%s%N 2>/dev/null || echo "0")
+
+    # For each file that has tags
+    for file_path in "${!file_tags[@]}"; do
+        # Check directory filter
+        if [[ -n "$search_dir" ]]; then
+            if [[ "$file_path" != "$search_dir"/* ]]; then
+                continue
+            fi
+        fi
+
+        local file_tags_str="${file_tags[$file_path]}"
+        local has_all_tags=true
+
+        # Check if file has all search tags
+        for search_tag in "${search_tags[@]}"; do
+            if [[ ! "$file_tags_str" =~ (^|\|)$search_tag($|\|) ]]; then
+                has_all_tags=false
+                break
+            fi
+        done
+
+        if [[ "$has_all_tags" == true ]]; then
+            matches+=("$file_path")
+        fi
+    done
+
+    # Calculate timing
+    local end_time
+    end_time=$(date +%s%N 2>/dev/null || echo "0")
+    local duration_ms=$(( (end_time - start_time) / 1000000 ))
+
+    # Display results
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        info "No files found with tags: ${search_tags[*]}"
+        return 0
+    fi
+
+    info "Found ${#matches[@]} file(s) with tags: ${search_tags[*]}"
+    if [[ -n "$search_dir" ]]; then
+        info "Search limited to directory: $search_dir"
+    fi
+    info "Search completed in ${duration_ms}ms"
+    echo ""
+
+    for file_path in "${matches[@]}"; do
+        echo "$file_path"
+        # Show all tags for this file
+        local file_tags_str="${file_tags[$file_path]}"
+        IFS='|' read -ra tag_array <<< "$file_tags_str"
+        local sorted_tags
+        mapfile -t sorted_tags < <(printf '%s\n' "${tag_array[@]}" | sort)
+        echo "  Tags: ${sorted_tags[*]}"
+        echo ""
+    done
+}
+
 # cmd_help() - Show help
 cmd_help() {
     cat << EOF
@@ -799,14 +907,15 @@ $SCRIPT_NAME $SCRIPT_VERSION - A bash-native file tagging system
  USAGE:
      $SCRIPT_NAME <command> [options]
 
-   COMMANDS:
-       install         Install $SCRIPT_NAME
-       uninstall       Uninstall $SCRIPT_NAME
-       add <files> <tags>    Add tags to one or more files
-       remove <file> <tag>   Remove a tag from a file
-       edit <file> <old-tag> <new-tag>   Replace a tag on a file
-       list [file]      List all tags or tags for a specific file
-       help            Show this help message
+    COMMANDS:
+        install         Install $SCRIPT_NAME
+        uninstall       Uninstall $SCRIPT_NAME
+        add <files> <tags>    Add tags to one or more files
+        remove <file> <tag>   Remove a tag from a file
+        edit <file> <old-tag> <new-tag>   Replace a tag on a file
+        list [file]      List all tags or tags for a specific file
+        search <tags>    Search for files by tag(s)
+        help            Show this help message
 
    EXAMPLES:
        $SCRIPT_NAME install
@@ -867,6 +976,9 @@ main() {
             ;;
         list)
             cmd_list "$@"
+            ;;
+        search)
+            cmd_search "$@"
             ;;
         help|--help|-h)
             cmd_help "$@"

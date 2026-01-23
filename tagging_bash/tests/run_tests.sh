@@ -15,6 +15,7 @@ source "$SCRIPT_DIR/integration/add_command_tests.sh"
 source "$SCRIPT_DIR/integration/remove_command_tests.sh"
 source "$SCRIPT_DIR/integration/edit_command_tests.sh"
 source "$SCRIPT_DIR/integration/list_command_tests.sh"
+source "$SCRIPT_DIR/integration/search_command_tests.sh"
 source "$SCRIPT_DIR/performance/performance_tests.sh"
 
 # Run test suite with isolation
@@ -41,6 +42,9 @@ run_isolated_test_suite() {
             ;;
         "Integration Tests - List Command")
             suite_func="run_integration_list_tests"
+            ;;
+        "Integration Tests - Search Command")
+            suite_func="run_integration_search_tests"
             ;;
         "Performance Tests")
             suite_func="run_performance_tests"
@@ -72,6 +76,7 @@ main() {
     run_isolated_test_suite "Integration Tests - Remove Command" "$SCRIPT_DIR/integration/remove_command_tests.sh"
     run_isolated_test_suite "Integration Tests - Edit Command" "$SCRIPT_DIR/integration/edit_command_tests.sh"
     run_isolated_test_suite "Integration Tests - List Command" "$SCRIPT_DIR/integration/list_command_tests.sh"
+    run_isolated_test_suite "Integration Tests - Search Command" "$SCRIPT_DIR/integration/search_command_tests.sh"
     run_isolated_test_suite "Performance Tests" "$SCRIPT_DIR/performance/performance_tests.sh"
 
     # Print final summary

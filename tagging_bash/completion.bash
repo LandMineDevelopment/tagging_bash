@@ -38,12 +38,18 @@ _tagg() {
 
     case $cword in
         1)
-            COMPREPLY=($(compgen -W "install uninstall add remove edit list help" -- "$cur"))
+            COMPREPLY=($(compgen -W "install uninstall add remove edit list search help" -- "$cur"))
             ;;
         2)
             case $prev in
                 add|remove|edit|list)
                     _filedir
+                    ;;
+                search)
+                    # Complete existing tags for search
+                    local tags
+                    tags=$("$tagg_cmd" list 2>/dev/null | sed 's/^  //' | tr '\n' ' ')
+                    COMPREPLY=($(compgen -W "$tags" -- "$cur"))
                     ;;
             esac
             ;;
