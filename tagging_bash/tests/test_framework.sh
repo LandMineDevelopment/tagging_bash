@@ -109,6 +109,40 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    local haystack="$1"
+    local needle="$2"
+    local message="${3:-"String should not contain '$needle'"}"
+
+    if [[ "$haystack" != *"$needle"* ]]; then
+        echo -e "${GREEN}✓ PASS${NC}: $message"
+        return $TEST_PASS
+    else
+        echo -e "${RED}✗ FAIL${NC}: $message"
+        return $TEST_FAIL
+    fi
+}
+
+# measure_time_ms() - Measure execution time of a command in milliseconds
+measure_time_ms() {
+    local start_time
+    local end_time
+    local duration_ms
+
+    start_time=$(date +%s%N 2>/dev/null || echo "0")
+    "$@"
+    end_time=$(date +%s%N 2>/dev/null || echo "0")
+
+    # Calculate duration in milliseconds
+    if [[ $start_time != "0" && $end_time != "0" ]]; then
+        duration_ms=$(( (end_time - start_time) / 1000000 ))
+        echo "$duration_ms"
+    else
+        # Fallback if date +%s%N not available
+        echo "0"
+    fi
+}
+
 assert_performance() {
     local duration_ms="$1"
     local max_ms="$2"
@@ -179,7 +213,9 @@ mock_function() {
     fi
 
     # Install mock
-    eval "$func_name() { $mock_body }"
+    eval "$func_name() {
+$mock_body
+}"
 }
 
 restore_function() {

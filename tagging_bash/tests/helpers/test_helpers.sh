@@ -56,6 +56,20 @@ get_tag_files() {
     echo "/tmp/file1 /tmp/file2"  # Mock for testing
 }
 
+# Performance measurement helpers
+measure_time_ms() {
+    local start_time
+    local end_time
+    local duration_ms
+
+    start_time=$(date +%s%N 2>/dev/null || echo "0")
+    "$@"
+    end_time=$(date +%s%N 2>/dev/null || echo "0")
+
+    duration_ms=$(( (end_time - start_time) / 1000000 ))
+    echo "$duration_ms"
+}
+
 # Concurrent testing helpers
 run_concurrent_commands() {
     local command="$1"

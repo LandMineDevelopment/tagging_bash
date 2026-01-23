@@ -267,6 +267,7 @@ This project is open source. See LICENSE file for details.
   - Directory-scoped search filtering
   - Fast search performance (<500ms)
   - Rich search result formatting
+  - Related tag suggestions during search
 
 - **Infrastructure:**
   - Self-contained installation in user directory

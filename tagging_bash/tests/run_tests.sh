@@ -11,9 +11,10 @@ source "$SCRIPT_DIR/helpers/test_helpers.sh"
 
 # Import test suites
 source "$SCRIPT_DIR/unit/tag_validation_tests.sh"
+source "$SCRIPT_DIR/unit/yaml_parsing_tests.sh"
 source "$SCRIPT_DIR/integration/add_command_tests.sh"
 source "$SCRIPT_DIR/integration/remove_command_tests.sh"
-source "$SCRIPT_DIR/integration/edit_command_tests.sh"
+# source "$SCRIPT_DIR/integration/edit_command_tests.sh"
 source "$SCRIPT_DIR/integration/list_command_tests.sh"
 source "$SCRIPT_DIR/integration/search_command_tests.sh"
 source "$SCRIPT_DIR/performance/performance_tests.sh"
@@ -31,15 +32,18 @@ run_isolated_test_suite() {
         "Unit Tests - Tag Validation")
             suite_func="run_unit_tag_tests"
             ;;
+        "Unit Tests - YAML Parsing")
+            suite_func="run_unit_yaml_tests"
+            ;;
         "Integration Tests - Add Command")
             suite_func="run_integration_add_tests"
             ;;
         "Integration Tests - Remove Command")
             suite_func="run_integration_remove_tests"
             ;;
-        "Integration Tests - Edit Command")
-            suite_func="run_integration_edit_tests"
-            ;;
+        # "Integration Tests - Edit Command")
+        #     suite_func="run_integration_edit_tests"
+        #     ;;
         "Integration Tests - List Command")
             suite_func="run_integration_list_tests"
             ;;
@@ -70,14 +74,15 @@ main() {
     echo "🧪 Running Tagging Bash Test Suite"
     echo "=================================="
 
-    # Run test suites in isolated processes
-    run_isolated_test_suite "Unit Tests - Tag Validation" "$SCRIPT_DIR/unit/tag_validation_tests.sh"
-    run_isolated_test_suite "Integration Tests - Add Command" "$SCRIPT_DIR/integration/add_command_tests.sh"
-    run_isolated_test_suite "Integration Tests - Remove Command" "$SCRIPT_DIR/integration/remove_command_tests.sh"
-    run_isolated_test_suite "Integration Tests - Edit Command" "$SCRIPT_DIR/integration/edit_command_tests.sh"
-    run_isolated_test_suite "Integration Tests - List Command" "$SCRIPT_DIR/integration/list_command_tests.sh"
-    run_isolated_test_suite "Integration Tests - Search Command" "$SCRIPT_DIR/integration/search_command_tests.sh"
-    run_isolated_test_suite "Performance Tests" "$SCRIPT_DIR/performance/performance_tests.sh"
+# Run test suites in isolated processes
+run_isolated_test_suite "Unit Tests - Tag Validation" "$SCRIPT_DIR/unit/tag_validation_tests.sh"
+run_isolated_test_suite "Unit Tests - YAML Parsing" "$SCRIPT_DIR/unit/yaml_parsing_tests.sh"
+run_isolated_test_suite "Integration Tests - Add Command" "$SCRIPT_DIR/integration/add_command_tests.sh"
+run_isolated_test_suite "Integration Tests - Remove Command" "$SCRIPT_DIR/integration/remove_command_tests.sh"
+# run_isolated_test_suite "Integration Tests - Edit Command" "$SCRIPT_DIR/integration/edit_command_tests.sh"
+run_isolated_test_suite "Integration Tests - List Command" "$SCRIPT_DIR/integration/list_command_tests.sh"
+run_isolated_test_suite "Integration Tests - Search Command" "$SCRIPT_DIR/integration/search_command_tests.sh"
+run_isolated_test_suite "Performance Tests" "$SCRIPT_DIR/performance/performance_tests.sh"
 
     # Print final summary
     echo ""

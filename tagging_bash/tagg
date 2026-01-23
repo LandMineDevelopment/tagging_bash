@@ -18,11 +18,13 @@ readonly _TAGG_SCRIPT_LOADED=true
 # Constants
 # ============================================================================
 
+
+
 readonly SCRIPT_NAME="tagg"
 readonly SCRIPT_VERSION="0.1.0"
 readonly CONFIG_DIR="${HOME}/.tagging_bash"
 readonly TAGS_FILE="${CONFIG_DIR}/tags.md"
-readonly CONFIG_FILE="${CONFIG_DIR}/config.sh"
+readonly CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 readonly LOCK_FILE="${CONFIG_DIR}/.lock"
 
 # Default configuration
@@ -112,11 +114,151 @@ release_lock() {
     flock -u 200 2>/dev/null || true
 }
 
-# load_config() - Load user configuration
+# parse_yaml() - Parse YAML file and output flattened key=value pairs
+parse_yaml() {
+    local yaml_file="$1"
+
+    if [[ ! -f "$yaml_file" ]]; then
+        error "YAML file does not exist: $yaml_file"
+        return 1
+    fi
+
+    if [[ ! -r "$yaml_file" ]]; then
+        error "YAML file not readable: $yaml_file"
+        return 1
+    fi
+
+    # Parse YAML with support for nested structures
+    local path_stack=()
+    local prev_indent=-1
+
+    while IFS= read -r line; do
+        # Skip empty lines and comments
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+        # Calculate indentation (spaces)
+        local indent=0
+        while [[ "${line:indent:1}" == " " ]]; do
+            ((indent++))
+        done
+
+        # Remove indentation from line
+        line="${line:indent}"
+
+        # Check if this is a key-value pair
+        if [[ "$line" =~ ^([a-zA-Z0-9_]+):[[:space:]]*(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local value="${BASH_REMATCH[2]}"
+
+            # Trim trailing spaces from value
+            value="${value%"${value##*[![:space:]]}"}"
+
+            # Adjust path stack based on indentation
+            while [[ ${#path_stack[@]} -gt 0 && $indent < $prev_indent ]]; do
+                unset 'path_stack[${#path_stack[@]}-1]'
+            done
+
+            # Build full key path
+            local full_key=""
+            if [[ ${#path_stack[@]} -gt 0 ]]; then
+                full_key="${path_stack[*]}"
+                full_key="${full_key// /.}."
+            fi
+            full_key="${full_key}${key}"
+
+            # If value is empty, this is a nested object start
+            if [[ -z "$value" ]]; then
+                path_stack+=("$key")
+                prev_indent=$indent
+            else
+                # Output key=value
+                echo "$full_key=$value"
+                prev_indent=$indent
+            fi
+        fi
+    done < "$yaml_file"
+}
+
+# load_config() - Load user configuration from YAML
 load_config() {
+    # Load global config first
     if [[ -f "$CONFIG_FILE" ]]; then
-        # shellcheck source=/dev/null
-        source "$CONFIG_FILE"
+        while IFS='=' read -r key value; do
+            # Skip empty lines
+            [[ -z "$key" ]] && continue
+            # Map YAML keys to internal variables
+            case "$key" in
+                tag_separator)
+                    # Validate: should be a single character or short string
+                    if [[ ${#value} -gt 10 ]]; then
+                        error "Invalid tag_separator '$value': too long (max 10 characters)"
+                        return 1
+                    fi
+                    TAG_SEPARATOR="$value"
+                    ;;
+                fuzzy_threshold)
+                    # Validate: should be a number
+                    if ! [[ "$value" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+                        error "Invalid fuzzy_threshold '$value': must be a number"
+                        return 1
+                    fi
+                    FUZZY_THRESHOLD="$value"
+                    ;;
+                hierarchy_separator)
+                    # Same as tag_separator
+                    if [[ ${#value} -gt 10 ]]; then
+                        error "Invalid hierarchy_separator '$value': too long (max 10 characters)"
+                        return 1
+                    fi
+                    TAG_SEPARATOR="$value"
+                    ;;
+                *)
+                    # Unknown key, warn but continue
+                    info "Warning: Unknown config key '$key', ignoring"
+                    ;;
+            esac
+        done < <(parse_yaml "$CONFIG_FILE")
+    fi
+
+    # Load project-specific config if exists (overrides global)
+    local project_config=".tagging_bash/config.yaml"
+    if [[ -f "$project_config" ]]; then
+        while IFS='=' read -r key value; do
+            # Skip empty lines
+            [[ -z "$key" ]] && continue
+            # Map YAML keys to internal variables
+            case "$key" in
+                tag_separator)
+                    # Validate: should be a single character or short string
+                    if [[ ${#value} -gt 10 ]]; then
+                        error "Invalid tag_separator '$value': too long (max 10 characters)"
+                        return 1
+                    fi
+                    TAG_SEPARATOR="$value"
+                    ;;
+                fuzzy_threshold)
+                    # Validate: should be a number
+                    if ! [[ "$value" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+                        error "Invalid fuzzy_threshold '$value': must be a number"
+                        return 1
+                    fi
+                    FUZZY_THRESHOLD="$value"
+                    ;;
+                hierarchy_separator)
+                    # Same as tag_separator
+                    if [[ ${#value} -gt 10 ]]; then
+                        error "Invalid hierarchy_separator '$value': too long (max 10 characters)"
+                        return 1
+                    fi
+                    TAG_SEPARATOR="$value"
+                    ;;
+                *)
+                    # Unknown key, warn but continue
+                    info "Warning: Unknown config key '$key', ignoring"
+                    ;;
+            esac
+        done < <(parse_yaml "$project_config")
     fi
 
     # Set defaults if not configured
@@ -124,14 +266,14 @@ load_config() {
     FUZZY_THRESHOLD="${FUZZY_THRESHOLD:-$DEFAULT_FUZZY_THRESHOLD}"
 }
 
-# save_config() - Save configuration
+# save_config() - Save configuration to YAML
 save_config() {
     mkdir -p "$CONFIG_DIR"
 
     cat > "$CONFIG_FILE" << EOF
 # tagging_bash configuration
-TAG_SEPARATOR="${TAG_SEPARATOR:-$DEFAULT_TAG_SEPARATOR}"
-FUZZY_THRESHOLD="${FUZZY_THRESHOLD:-$DEFAULT_FUZZY_THRESHOLD}"
+tag_separator: "${TAG_SEPARATOR:-$DEFAULT_TAG_SEPARATOR}"
+fuzzy_threshold: "${FUZZY_THRESHOLD:-$DEFAULT_FUZZY_THRESHOLD}"
 EOF
 }
 
@@ -356,9 +498,23 @@ cmd_install() {
     local script_path
     script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
-    if mkdir -p "$bin_dir" 2>/dev/null && cp "$script_path" "$bin_dir/tagg" 2>/dev/null; then
-        chmod +x "$bin_dir/tagg"
-        info "Installed $SCRIPT_NAME to $bin_dir/tagg"
+    if mkdir -p "$bin_dir" 2>/dev/null; then
+        # Copy the main script to the config directory
+        if cp "$script_path" "$CONFIG_DIR/tagg" 2>/dev/null; then
+            # Create a wrapper script that sources the main script
+            cat > "$bin_dir/tagg" << 'EOF'
+#!/bin/bash
+# Wrapper script for tagg - sources the main script and passes arguments
+
+# Source the main script from config directory
+source ~/.tagging_bash/tagg
+main "$@"
+EOF
+            chmod +x "$bin_dir/tagg"
+            info "Installed $SCRIPT_NAME wrapper to $bin_dir/tagg"
+        else
+            info "Warning: Could not copy main script to config directory"
+        fi
         if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
             info "To use $SCRIPT_NAME, we need to add $bin_dir to your PATH."
             # Ask for permission to modify .bashrc
@@ -793,10 +949,8 @@ cmd_list() {
 
 # cmd_search() - Search for files by tag(s)
 cmd_search() {
-    # Handle help first
-    for arg in "$@"; do
-        if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
-            cat << 'EOF'
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+        cat << 'EOF'
 tagg search - Search for files by tag(s)
 
 USAGE:
@@ -831,9 +985,8 @@ SEARCH FEATURES:
     - Fast performance (<500ms)
 
 EOF
-            return 0
-        fi
-    done
+        return 0
+    fi
 
     # Local variables
     local search_tags=()
@@ -890,12 +1043,6 @@ EOF
     local processed=0
     local show_progress=false
 
-    # Show progress for large searches (>100 files)
-    if [[ $total_files -gt 100 ]]; then
-        show_progress=true
-        info "Searching $total_files files..."
-    fi
-
     # For each file that has tags
     for file_path in "${!file_tags[@]}"; do
         processed=$((processed + 1))
@@ -937,10 +1084,15 @@ EOF
             matches+=("$file_path")
         fi
 
-        # Show progress for large searches
-        if [[ "$show_progress" == true && $((processed % 50)) -eq 0 ]]; then
-            local percent=$((processed * 100 / total_files))
-            info "Searching... ${percent}% complete (${processed}/${total_files} files)" >&2
+        # Show progress for long searches (>1 second)
+        if [[ $((processed % 50)) -eq 0 ]]; then
+            local current_time=$(date +%s%N 2>/dev/null || echo "0")
+            local elapsed_ms=$(( (current_time - start_time) / 1000000 ))
+            if [[ $elapsed_ms -gt 1000 ]]; then
+                show_progress=true
+                local percent=$((processed * 100 / total_files))
+                info "Searching... ${percent}% complete" >&2
+            fi
         fi
     done
 
@@ -1001,7 +1153,22 @@ EOF
 
         # Collect tags for suggestions
         for tag in "${tag_array[@]}"; do
-            if [[ ! " ${search_tags[*]} " =~ " $tag " ]]; then
+            local should_exclude=false
+            if [[ "$fuzzy_mode" == true ]]; then
+                # For fuzzy search, exclude tags that contain any search term as substring
+                for search_term in "${search_tags[@]}"; do
+                    if [[ "$tag" == *"$search_term"* ]]; then
+                        should_exclude=true
+                        break
+                    fi
+                done
+            else
+                # For exact search, exclude tags that exactly match search terms
+                if [[ " ${search_tags[*]} " =~ " $tag " ]]; then
+                    should_exclude=true
+                fi
+            fi
+            if [[ "$should_exclude" == false ]]; then
                 all_result_tags+=("$tag")
             fi
         done
@@ -1012,8 +1179,36 @@ EOF
     if [[ ${#all_result_tags[@]} -gt 0 ]]; then
         local unique_suggestions=($(printf '%s\n' "${all_result_tags[@]}" | sort | uniq))
         if [[ ${#unique_suggestions[@]} -gt 0 ]]; then
-            info "Related tags in results: ${unique_suggestions[*]}"
+            info "Related tags: ${unique_suggestions[*]}"
         fi
+    fi
+}
+
+# cmd_config() - Show current configuration
+cmd_config() {
+
+    if [[ $# -gt 0 ]]; then
+        error "Usage: $SCRIPT_NAME config"
+        return "$EXIT_USAGE"
+    fi
+
+    echo "Current Configuration:"
+    echo "======================"
+    echo "Tag Separator: $TAG_SEPARATOR"
+    echo "Fuzzy Threshold: $FUZZY_THRESHOLD"
+    echo ""
+    echo "Configuration Files:"
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo "Global: $CONFIG_FILE"
+    else
+        echo "Global: Not found (using defaults)"
+    fi
+
+    local project_config=".tagging_bash/config.yaml"
+    if [[ -f "$project_config" ]]; then
+        echo "Project: $project_config"
+    else
+        echo "Project: Not found"
     fi
 }
 
@@ -1028,11 +1223,12 @@ $SCRIPT_NAME $SCRIPT_VERSION - A bash-native file tagging system
     COMMANDS:
         install         Install $SCRIPT_NAME
         uninstall       Uninstall $SCRIPT_NAME
-        add <files> <tags>    Add tags to one or more files
-        remove <file> <tag>   Remove a tag from a file
-        edit <file> <old-tag> <new-tag>   Replace a tag on a file
+         add <files> <tags>    Add tags to one or more files
+         remove <file> <tag>   Remove a tag from a file
+         edit <file> <old-tag> <new-tag>   Replace a tag on a file
         list [file]      List all tags or tags for a specific file
         search <tags>    Search for files by tag(s)
+        config          Show current configuration
         help            Show this help message
 
    EXAMPLES:
@@ -1040,9 +1236,10 @@ $SCRIPT_NAME $SCRIPT_VERSION - A bash-native file tagging system
        $SCRIPT_NAME add script.sh bash utility
        $SCRIPT_NAME remove script.sh bash
        $SCRIPT_NAME edit script.sh bash shell
-       $SCRIPT_NAME list
-       $SCRIPT_NAME list script.sh
-       $SCRIPT_NAME help
+        $SCRIPT_NAME list
+        $SCRIPT_NAME list script.sh
+        $SCRIPT_NAME config
+        $SCRIPT_NAME help
 
  For more information, see the README.md file.
 EOF
@@ -1070,7 +1267,7 @@ main() {
     command="$1"
     shift
 
-    echo "Command: '$command'" >&2
+
     case "$command" in
         install)
             cmd_install "$@"
@@ -1098,6 +1295,9 @@ main() {
             ;;
         search)
             cmd_search "$@"
+            ;;
+        config)
+            cmd_config "$@"
             ;;
         help|--help|-h)
             cmd_help "$@"

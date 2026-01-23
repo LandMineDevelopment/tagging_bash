@@ -9,9 +9,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/../../tagg"
 # Test setup and teardown
 setup_test() {
     # Mock functions for testing - these will be restored in teardown
-    mock_function "save_tags" "return 0
-    mock_function "acquire_lock" "return 0
-    mock_function "release_lock" "return 0
+    mock_function "save_tags" "return 0"
+    mock_function "acquire_lock" "return 0"
+    mock_function "release_lock" "return 0"
 }
 
 teardown_test() {
