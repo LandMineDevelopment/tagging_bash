@@ -793,14 +793,52 @@ cmd_list() {
 
 # cmd_search() - Search for files by tag(s)
 cmd_search() {
-    if [[ $# -eq 0 ]]; then
-        error "Usage: $SCRIPT_NAME search <tag> [tag2 ...] [--dir <directory>]"
-        return "$EXIT_USAGE"
-    fi
+    # Handle help first
+    for arg in "$@"; do
+        if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+            cat << 'EOF'
+tagg search - Search for files by tag(s)
 
+USAGE:
+    tagg search <tag> [tag2 ...] [options]
+
+OPTIONS:
+    --dir <directory>    Limit search to specified directory and subdirectories
+    --fuzzy              Enable fuzzy search (substring matching)
+    --help, -h          Show this help message
+
+EXAMPLES:
+    # Basic exact search
+    tagg search important
+
+    # Multi-tag search (AND logic)
+    tagg search python utility
+
+    # Directory-limited search
+    tagg search project --dir /home/user/docs
+
+    # Fuzzy search examples
+    tagg search --fuzzy py         # Find files with tags containing 'py' (python, pypi, etc.)
+    tagg search --fuzzy util       # Find files with tags containing 'util' (utility, utils, etc.)
+    tagg search --fuzzy test --dir ./tests  # Fuzzy search in specific directory
+
+SEARCH FEATURES:
+    - Exact tag matching (default)
+    - Fuzzy substring matching (--fuzzy)
+    - Multiple tag AND logic
+    - Directory scope limiting
+    - Related tag suggestions
+    - Fast performance (<500ms)
+
+EOF
+            return 0
+        fi
+    done
+
+    # Local variables
     local search_tags=()
     local search_dir=""
-    local parsing_options=false
+    local fuzzy_mode=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -813,6 +851,10 @@ cmd_search() {
                 search_dir="$2"
                 shift 2
                 ;;
+            --fuzzy)
+                fuzzy_mode=true
+                shift
+                ;;
             --*)
                 error "Unknown option: $1"
                 return "$EXIT_USAGE"
@@ -820,8 +862,8 @@ cmd_search() {
             *)
                 search_tags+=("$1")
                 shift
-                ;;
-        esac
+        ;;
+    esac
     done
 
     if [[ ${#search_tags[@]} -eq 0 ]]; then
@@ -844,8 +886,19 @@ cmd_search() {
     local start_time
     start_time=$(date +%s%N 2>/dev/null || echo "0")
 
+    local total_files=${#file_tags[@]}
+    local processed=0
+    local show_progress=false
+
+    # Show progress for large searches (>100 files)
+    if [[ $total_files -gt 100 ]]; then
+        show_progress=true
+        info "Searching $total_files files..."
+    fi
+
     # For each file that has tags
     for file_path in "${!file_tags[@]}"; do
+        processed=$((processed + 1))
         # Check directory filter
         if [[ -n "$search_dir" ]]; then
             if [[ "$file_path" != "$search_dir"/* ]]; then
@@ -858,7 +911,23 @@ cmd_search() {
 
         # Check if file has all search tags
         for search_tag in "${search_tags[@]}"; do
-            if [[ ! "$file_tags_str" =~ (^|\|)$search_tag($|\|) ]]; then
+            local tag_found=false
+            if [[ "$fuzzy_mode" == true ]]; then
+                # Fuzzy search: check if search_tag is substring of any file tag
+                IFS='|' read -ra file_tag_array <<< "$file_tags_str"
+                for file_tag in "${file_tag_array[@]}"; do
+                    if [[ "$file_tag" == *"$search_tag"* ]]; then
+                        tag_found=true
+                        break
+                    fi
+                done
+            else
+                # Exact search: check for exact tag match
+                if [[ "$file_tags_str" =~ (^|\|)$search_tag($|\|) ]]; then
+                    tag_found=true
+                fi
+            fi
+            if [[ "$tag_found" == false ]]; then
                 has_all_tags=false
                 break
             fi
@@ -867,7 +936,18 @@ cmd_search() {
         if [[ "$has_all_tags" == true ]]; then
             matches+=("$file_path")
         fi
+
+        # Show progress for large searches
+        if [[ "$show_progress" == true && $((processed % 50)) -eq 0 ]]; then
+            local percent=$((processed * 100 / total_files))
+            info "Searching... ${percent}% complete (${processed}/${total_files} files)" >&2
+        fi
     done
+
+    # Final progress update
+    if [[ "$show_progress" == true ]]; then
+        info "Search complete - processed ${total_files} files" >&2
+    fi
 
     # Calculate timing
     local end_time
@@ -876,17 +956,40 @@ cmd_search() {
 
     # Display results
     if [[ ${#matches[@]} -eq 0 ]]; then
-        info "No files found with tags: ${search_tags[*]}"
+        local search_type="tags"
+        if [[ "$fuzzy_mode" == true ]]; then
+            search_type="tags containing"
+        fi
+        info "No files found with $search_type: ${search_tags[*]}"
+        # Show tag suggestions for no matches
+        if [[ ${#search_tags[@]} -eq 1 ]]; then
+            local search_tag="${search_tags[0]}"
+            local suggestions=()
+            for tag in "${!tag_files[@]}"; do
+                if [[ "$tag" != "$search_tag" && "$tag" == *"$search_tag"* ]]; then
+                    suggestions+=("$tag")
+                fi
+            done
+            if [[ ${#suggestions[@]} -gt 0 ]]; then
+                info "Did you mean: ${suggestions[*]}"
+            fi
+        fi
         return 0
     fi
 
-    info "Found ${#matches[@]} file(s) with tags: ${search_tags[*]}"
+    local search_type="tags"
+    if [[ "$fuzzy_mode" == true ]]; then
+        search_type="tags containing"
+    fi
+    info "Found ${#matches[@]} file(s) with $search_type: ${search_tags[*]}"
     if [[ -n "$search_dir" ]]; then
         info "Search limited to directory: $search_dir"
     fi
     info "Search completed in ${duration_ms}ms"
     echo ""
 
+    # Collect all tags from results for suggestions
+    local all_result_tags=()
     for file_path in "${matches[@]}"; do
         echo "$file_path"
         # Show all tags for this file
@@ -895,8 +998,23 @@ cmd_search() {
         local sorted_tags
         mapfile -t sorted_tags < <(printf '%s\n' "${tag_array[@]}" | sort)
         echo "  Tags: ${sorted_tags[*]}"
+
+        # Collect tags for suggestions
+        for tag in "${tag_array[@]}"; do
+            if [[ ! " ${search_tags[*]} " =~ " $tag " ]]; then
+                all_result_tags+=("$tag")
+            fi
+        done
         echo ""
     done
+
+    # Show related tag suggestions
+    if [[ ${#all_result_tags[@]} -gt 0 ]]; then
+        local unique_suggestions=($(printf '%s\n' "${all_result_tags[@]}" | sort | uniq))
+        if [[ ${#unique_suggestions[@]} -gt 0 ]]; then
+            info "Related tags in results: ${unique_suggestions[*]}"
+        fi
+    fi
 }
 
 # cmd_help() - Show help
@@ -952,6 +1070,7 @@ main() {
     command="$1"
     shift
 
+    echo "Command: '$command'" >&2
     case "$command" in
         install)
             cmd_install "$@"
